@@ -1,40 +1,29 @@
-import express from 'express';
-import bodyParser from 'body-parser';
-import { fileURLToPath } from 'url';
-import path from 'path';
-
-// Importing the modules
-import pairRouter from './pair.js';
-import qrRouter from './qr.js';
-import QRCode from 'qrcode';
-
+const express = require('express');
 const app = express();
-
-// Resolve the current directory path in ES modules
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
+__path = process.cwd()
+const bodyParser = require("body-parser");
 const PORT = process.env.PORT || 8000;
-
-import('events').then(events => {
-    events.EventEmitter.defaultMaxListeners = 500;
-});
-
-// Middleware
+let server = require('./qr'),
+    code = require('./pair');
+require('events').EventEmitter.defaultMaxListeners = 500;
+app.use('/server', server);
+app.use('/code', code);
+app.use('/pair',async (req, res, next) => {
+res.sendFile(__path + '/pair.html')
+})
+app.use('/qr',async (req, res, next) => {
+res.sendFile(__path + '/qr.html')
+})
+app.use('/',async (req, res, next) => {
+res.sendFile(__path + '/main.html')
+})
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
-app.use(express.static(__dirname));
-
-// Routes
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'pair.html'));
-});
-
-app.use('/pair', pairRouter);
-app.use('/qr', qrRouter);
-
 app.listen(PORT, () => {
-    console.log(`YoutTube: @mr_unique_hacker\n\nGitHub: @mruniquehacker\n\nServer running on http://localhost:${PORT}`);
-});
+    console.log(`
+Don't Forgot To Give Star MALVIN-XD
 
-export default app;
+ Server running on http://localhost:` + PORT)
+})
+
+module.exports = app

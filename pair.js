@@ -1,40 +1,25 @@
 // api/pair.js
-import { writeFileSync, mkdirSync, existsSync } from "fs";
+import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
 import pino from "pino";
 import {
   makeWASocket,
   useMultiFileAuthState,
-  fetchLatestBaileysVersion
+  fetchLatestBaileysVersion,
 } from "@whiskeysockets/baileys";
 import PhoneNumber from "awesome-phonenumber";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Create session folder in /tmp (Vercel only allows /tmp write)
-function makeSessionDir(sessionId) {
-  const base = "/tmp";
-  const dir = path.join(base, `session_${sessionId}`);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  return dir;
-}
-
-// Normalize number to WhatsApp-friendly format
+// Clean phone number to E.164 format without "+"
 function normalizeNumber(input) {
   try {
-    const pn = new PhoneNumber(input, "LK"); // default region LK (Sri Lanka) - change if needed
+    const pn = new PhoneNumber(input);
     if (pn.isValid()) {
-      const e164 = pn.getNumber("e164"); // +94771234567
-      return e164.replace(/\D/g, ""); // 94771234567
+      return pn.getNumber("e164").replace("+", ""); // e.g. 94771234567
     }
   } catch {}
-  // fallback - strip non-digits
   return String(input).replace(/\D/g, "").replace(/^0+/, "");
 }
 
-// Parse JSON body safely
 function parseBody(req) {
   return new Promise((resolve, reject) => {
     let data = "";
@@ -64,10 +49,53 @@ export default async function handler(req, res) {
 
     const phone = normalizeNumber(number);
     if (!phone || phone.length < 6) {
-      return res.status(400).json({ error: "Invalid phone number format" });
+      return res
+        .status(400)
+        .json({ error: "Invalid phone number. Please enter full international number." });
     }
 
-    const sessionId = `${Date.now()}_${Math.random()
-      .toString(36)
-      .slice(2, 9)}`;
-    const sessionDir = makeSessionDir(sessionId);
+    // Vercel allows only /tmp directory
+    const sessionId = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    const sessionDir = path.join("/tmp", `session_${sessionId}`);
+    fs.mkdirSync(sessionDir, { recursive: true });
+
+    const logger = pino({ level: "silent" });
+    const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+    const { version } = await fetchLatestBaileysVersion();
+
+    const sock = makeWASocket({
+      version,
+      logger,
+      auth: state,
+      printQRInTerminal: false,
+      browser: ["Chrome (Vercel)", "Chrome", "121"],
+    });
+
+    sock.ev.on("creds.update", saveCreds);
+
+    // Generate pairing code immediately if not registered
+    if (!sock.authState.creds.registered) {
+      try {
+        const code = await sock.requestPairingCode(phone);
+        console.log("[PAIR] Generated code:", code);
+
+        return res.status(200).json({
+          ok: true,
+          code,
+          sessionId,
+          hint:
+            "Open WhatsApp → Linked Devices → Link a Device → 'Link with phone number' and enter this code.",
+        });
+      } catch (err) {
+        console.error("[PAIR] Error requesting code:", err);
+        return res
+          .status(503)
+          .json({ error: "Failed to generate pairing code. Try again." });
+      }
+    } else {
+      return res.status(200).json({
+        ok: true,
+        message: "This account is already registered.",
+      });
+    }
+  } catch (
